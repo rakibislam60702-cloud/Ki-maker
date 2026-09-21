@@ -1,0 +1,6 @@
+{
+  "name": "KeyAuth",
+  "description": "Private Admin Panel for KeyAuth license management, key creation, device limits, and Firebase Realtime Database live sync",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
