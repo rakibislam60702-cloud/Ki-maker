@@ -20,13 +20,9 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Force Generate Accurate google-services.json
+      - name: Create google-services.json
         run: |
-          rm -f app/google-services.json
-          # Restore debug keystore from base64 if present
-          if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
-          fi
+          mkdir -p app
           cat << 'EOF' > app/google-services.json
           {
             "project_info": {
@@ -77,11 +73,18 @@ jobs:
           }
           EOF
 
+      - name: Generate standard debug keystore
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -v -keystore ~/.android/debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+          cp ~/.android/debug.keystore debug.keystore
+          cp ~/.android/debug.keystore app/debug.keystore
+
       - name: Make Gradle Executable
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon -x test -x lint -x validateSigningDebug
+        run: ./gradlew assembleDebug --no-daemon -x test -x lint
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
