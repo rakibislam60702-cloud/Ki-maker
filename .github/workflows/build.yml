@@ -20,11 +20,48 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Create mock google-services.json if missing
+        run: |
+          mkdir -p app
+          cat << 'EOF' > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "1234567890",
+              "firebase_url": "https://rakib-ai-engine-default-rtdb.firebaseio.com",
+              "project_id": "rakib-ai-engine",
+              "storage_bucket": "rakib-ai-engine.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:1234567890:android:mockappid",
+                  "android_client_info": {
+                    "package_name": "com.example.keyauth"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "fake_api_key"
+                  }
+                ],
+                "services": {}
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
+      - name: Generate Debug Keystore
+        run: |
+          keytool -genkeypair -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+          mkdir -p ~/.android
+          cp debug.keystore ~/.android/debug.keystore
+
       - name: Make Gradle Executable
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
