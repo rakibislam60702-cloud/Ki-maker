@@ -20,7 +20,7 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Create mock google-services.json
+      - name: Create matching google-services.json
         run: |
           mkdir -p app
           cat << 'EOF' > app/google-services.json
@@ -36,7 +36,7 @@ jobs:
                 "client_info": {
                   "mobilesdk_app_id": "1:1234567890:android:mockappid",
                   "android_client_info": {
-                    "package_name": "com.example.keyauth"
+                    "package_name": "com.aistudio.keyauth.qrxkit"
                   }
                 },
                 "api_key": [
@@ -54,11 +54,11 @@ jobs:
       - name: Make Gradle Executable
         run: chmod +x gradlew
 
-      - name: Build APK (Bypassing signing check)
-        run: ./gradlew packageDebug --no-daemon -x test -x lint -x validateSigningDebug
+      - name: Build APK
+        run: ./gradlew assembleDebug --no-daemon -x test -x lint
 
-      - name: Find & Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KeyManager-Admin-APK
-          path: app/build/outputs/apk/**/*.apk
+          path: app/build/outputs/apk/debug/*.apk
