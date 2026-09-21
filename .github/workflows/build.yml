@@ -20,13 +20,17 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Create matching google-services.json
+      - name: Force Generate Accurate google-services.json
         run: |
-          mkdir -p app
+          rm -f app/google-services.json
+          # Restore debug keystore from base64 if present
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          fi
           cat << 'EOF' > app/google-services.json
           {
             "project_info": {
-              "project_number": "1234567890",
+              "project_number": "100000000000",
               "firebase_url": "https://rakib-ai-engine-default-rtdb.firebaseio.com",
               "project_id": "rakib-ai-engine",
               "storage_bucket": "rakib-ai-engine.appspot.com"
@@ -34,17 +38,39 @@ jobs:
             "client": [
               {
                 "client_info": {
-                  "mobilesdk_app_id": "1:1234567890:android:mockappid",
+                  "mobilesdk_app_id": "1:100000000000:android:abcdef123456",
                   "android_client_info": {
                     "package_name": "com.aistudio.keyauth.qrxkit"
                   }
                 },
                 "api_key": [
                   {
-                    "current_key": "fake_api_key"
+                    "current_key": "AIzaSyD-FakeKeyForBuildingPurposesOnly123"
                   }
                 ],
-                "services": {}
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              },
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:100000000000:android:abcdef123457",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.keyauth.qrvklt"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyD-FakeKeyForBuildingPurposesOnly123"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
               }
             ],
             "configuration_version": "1"
@@ -54,8 +80,8 @@ jobs:
       - name: Make Gradle Executable
         run: chmod +x gradlew
 
-      - name: Build APK
-        run: ./gradlew assembleDebug --no-daemon -x test -x lint
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon -x test -x lint -x validateSigningDebug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
