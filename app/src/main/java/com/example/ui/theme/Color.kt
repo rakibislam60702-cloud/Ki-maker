@@ -48,6 +48,13 @@ val TextSecondaryLight = Color(0xFF475569)
 val TextMutedLight = Color(0xFF94A3B8)
 
 // Modern Gradients
+val CyberNeonHeaderGradient = Brush.horizontalGradient(
+    colors = listOf(
+        Color(0xFF00F2FE), // Cyan
+        Color(0xFF4FACFE), // Electric Blue
+        Color(0xFF38BDF8)  // Neon Cyan / Sky
+    )
+)
 val CyberGradient = Brush.horizontalGradient(
     colors = listOf(Color(0xFF0284C7), Color(0xFF6366F1), Color(0xFF8B5CF6))
 )
