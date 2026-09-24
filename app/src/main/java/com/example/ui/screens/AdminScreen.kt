@@ -107,6 +107,8 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
     val context = LocalContext.current
     val allKeys by viewModel.allKeys.collectAsState()
     val cloudStatus by viewModel.cloudSyncStatus.collectAsState()
+    val isMaintenance by viewModel.isMaintenance.collectAsState()
+    val isUpdateRequired by viewModel.isUpdateRequired.collectAsState()
     val isServerOnline by viewModel.isServerOnline.collectAsState()
     val serverMaintenanceNotice by viewModel.maintenanceNotice.collectAsState()
     val isStatusUpdating by viewModel.isStatusUpdating.collectAsState()
@@ -448,6 +450,49 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
                             }
                         }
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // App Update Required Flag (DPModsSecurity/AppStatus/UpdateRequired)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Force App Update Required",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isUpdateRequired) StatusBlockedRed else TextMutedDark
+                                )
+                                Text(
+                                    text = "DPModsSecurity/AppStatus/UpdateRequired",
+                                    fontSize = 9.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = TextMutedDark
+                                )
+                            }
+                            Switch(
+                                checked = isUpdateRequired,
+                                onCheckedChange = { newState ->
+                                    viewModel.toggleUpdateRequired(newState) { success ->
+                                        if (success) {
+                                            Toast.makeText(
+                                                context,
+                                                if (newState) "✓ UpdateRequired set to TRUE" else "✓ UpdateRequired set to FALSE",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                },
+                                enabled = !isStatusUpdating,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = CyanPrimaryLight
+                                )
+                            )
+                        }
+
                         if (!isServerOnline) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Row(
@@ -461,7 +506,7 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = "Firebase RTDB node settings/app_status = \"offline\"",
+                                    text = "Firebase RTDB node DPModsSecurity/AppStatus/Maintenance = true",
                                     fontSize = 10.5.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = StatusBlockedRed

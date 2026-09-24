@@ -9,9 +9,17 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+data class AppStatusInfo(
+    val maintenance: Boolean = false,
+    val updateRequired: Boolean = false,
+    val notice: String = ""
+)
 
 class FirebaseRtdbService(
     val databaseUrl: String = "https://rakib-ai-engine-default-rtdb.firebaseio.com"
@@ -25,9 +33,14 @@ class FirebaseRtdbService(
         .writeTimeout(8, TimeUnit.SECONDS)
         .build()
 
+    private fun cleanBaseUrl(): String = databaseUrl.trimEnd('/')
+
+    /**
+     * Fetch all keys strictly from: DPModsSecurity/Keys
+     */
     suspend fun fetchAllKeys(): Result<List<KeyItem>> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/keys.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/Keys.json"
             val request = Request.Builder()
                 .url(url)
                 .get()
@@ -45,21 +58,53 @@ class FirebaseRtdbService(
                 Result.success(list)
             }
         } catch (e: Exception) {
-            Log.e(tag, "Failed to fetch keys from Firebase RTDB: ${e.message}")
+            Log.e(tag, "Failed to fetch keys from DPModsSecurity/Keys: ${e.message}")
             Result.failure(e)
         }
     }
 
+    /**
+     * Write key strictly under: DPModsSecurity/Keys/{keyName}
+     * Fields:
+     * - "Banned": false (boolean)
+     * - "DeviceLimit": integer
+     * - "ExpiryDate": string in strict "YYYY-MM-DD" format
+     * - "Devices": { "dummy": true } (object so client devices can register)
+     * Plus optional backward-compatible/admin fields (days, createdAt, etc.)
+     */
     suspend fun putKey(keyItem: KeyItem): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/keys/${keyItem.key}.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/Keys/${keyItem.key}.json"
+
+            // Compute strict YYYY-MM-DD format
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val expiryDateStr = if (keyItem.expiryDateStr.isNotBlank()) {
+                keyItem.expiryDateStr
+            } else if (keyItem.expiresAt != null) {
+                dateFormat.format(Date(keyItem.expiresAt))
+            } else {
+                val validityDays = keyItem.days.coerceAtLeast(1)
+                dateFormat.format(Date(System.currentTimeMillis() + validityDays * 86_400_000L))
+            }
+
             val payload = JSONObject().apply {
+                // Exact client app schema requirements:
+                put("Banned", keyItem.isBlocked)
+                put("DeviceLimit", keyItem.maxDevices)
+                put("ExpiryDate", expiryDateStr)
+
+                val devicesObj = JSONObject()
+                if (keyItem.devices.isEmpty()) {
+                    devicesObj.put("dummy", true)
+                } else {
+                    keyItem.devices.forEach { devId ->
+                        devicesObj.put(devId, true)
+                    }
+                }
+                put("Devices", devicesObj)
+
+                // Additional metadata preserved for Admin Panel rich dashboard display
                 put("days", keyItem.days)
-                put("maxDevices", keyItem.maxDevices)
-                val devicesArr = JSONArray()
-                keyItem.devices.forEach { devicesArr.put(it) }
-                put("devices", devicesArr)
-                put("status", keyItem.status)
                 put("createdAt", keyItem.createdAt)
                 if (keyItem.expiresAt != null) {
                     put("expiresAt", keyItem.expiresAt)
@@ -91,11 +136,16 @@ class FirebaseRtdbService(
         }
     }
 
-    suspend fun updateKeyStatus(key: String, newStatus: String): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * Ban / Unban action: toggle "DPModsSecurity/Keys/{keyName}/Banned"
+     * Also updates "status" for backward-compatibility with UI if needed.
+     */
+    suspend fun setKeyBanned(key: String, banned: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/keys/$key.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/Keys/$key.json"
             val payload = JSONObject().apply {
-                put("status", newStatus)
+                put("Banned", banned)
+                put("status", if (banned) "blocked" else "active")
             }
 
             val requestBody = payload.toString().toRequestBody(jsonMediaType)
@@ -112,27 +162,36 @@ class FirebaseRtdbService(
                 }
             }
         } catch (e: Exception) {
-            Log.e(tag, "Failed to update key status: ${e.message}")
+            Log.e(tag, "Failed to update banned status: ${e.message}")
             Result.failure(e)
         }
     }
 
+    /**
+     * Update key session (registered devices and expiration date) under DPModsSecurity/Keys/{keyName}
+     */
     suspend fun updateKeySession(
         key: String,
         devices: List<String>,
         expiresAt: Long?,
-        isUsed: Boolean
+        isUsed: Boolean,
+        expiryDateStr: String? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/keys/$key.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/Keys/$key.json"
             val payload = JSONObject().apply {
-                val devicesArr = JSONArray()
-                devices.forEach { devicesArr.put(it) }
-                put("devices", devicesArr)
+                val devicesObj = JSONObject()
+                if (devices.isEmpty()) {
+                    devicesObj.put("dummy", true)
+                } else {
+                    devices.forEach { devId -> devicesObj.put(devId, true) }
+                }
+                put("Devices", devicesObj)
+
                 if (expiresAt != null) {
                     put("expiresAt", expiresAt)
-                } else {
-                    put("expiresAt", JSONObject.NULL)
+                    val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                    put("ExpiryDate", expiryDateStr ?: dateFormat.format(Date(expiresAt)))
                 }
                 put("isUsed", isUsed)
             }
@@ -156,9 +215,12 @@ class FirebaseRtdbService(
         }
     }
 
+    /**
+     * Delete action: remove the node "DPModsSecurity/Keys/{keyName}"
+     */
     suspend fun deleteKey(key: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/keys/$key.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/Keys/$key.json"
             val request = Request.Builder()
                 .url(url)
                 .delete()
@@ -191,9 +253,13 @@ class FirebaseRtdbService(
         }
     }
 
-    suspend fun getAppStatus(): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+    /**
+     * Read app status from: DPModsSecurity/AppStatus
+     * Fields: Maintenance (boolean), UpdateRequired (boolean)
+     */
+    suspend fun getAppStatus(): Result<AppStatusInfo> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/settings.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/AppStatus.json"
             val request = Request.Builder().url(url).get().build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -201,25 +267,37 @@ class FirebaseRtdbService(
                 }
                 val body = response.body?.string()?.trim()
                 if (body.isNullOrBlank() || body == "null") {
-                    return@withContext Result.success(Pair("online", ""))
+                    return@withContext Result.success(AppStatusInfo(maintenance = false, updateRequired = false, notice = ""))
                 }
                 val json = JSONObject(body)
-                val status = json.optString("app_status", "online")
-                val notice = json.optString("maintenance_notice", "")
-                Result.success(Pair(status, notice))
+                val maintenance = json.optBoolean("Maintenance", json.optBoolean("maintenance", false))
+                val updateRequired = json.optBoolean("UpdateRequired", json.optBoolean("updateRequired", false))
+                val notice = json.optString("Notice", json.optString("maintenance_notice", ""))
+                Result.success(AppStatusInfo(maintenance = maintenance, updateRequired = updateRequired, notice = notice))
             }
         } catch (e: Exception) {
-            Log.e(tag, "Failed to get app_status: ${e.message}")
+            Log.e(tag, "Failed to get DPModsSecurity/AppStatus: ${e.message}")
             Result.failure(e)
         }
     }
 
-    suspend fun setAppStatus(status: String, notice: String): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * App Status management: read and toggle
+     * "DPModsSecurity/AppStatus/Maintenance" and "DPModsSecurity/AppStatus/UpdateRequired"
+     */
+    suspend fun setAppStatus(
+        maintenance: Boolean,
+        updateRequired: Boolean,
+        notice: String = ""
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val url = "$databaseUrl/settings.json"
+            val url = "${cleanBaseUrl()}/DPModsSecurity/AppStatus.json"
             val payload = JSONObject().apply {
-                put("app_status", status)
-                put("maintenance_notice", notice)
+                put("Maintenance", maintenance)
+                put("UpdateRequired", updateRequired)
+                if (notice.isNotBlank()) {
+                    put("Notice", notice)
+                }
                 put("updated_at", System.currentTimeMillis())
             }
             val requestBody = payload.toString().toRequestBody(jsonMediaType)
@@ -236,7 +314,7 @@ class FirebaseRtdbService(
                 }
             }
         } catch (e: Exception) {
-            Log.e(tag, "Failed to update app_status: ${e.message}")
+            Log.e(tag, "Failed to update DPModsSecurity/AppStatus: ${e.message}")
             Result.failure(e)
         }
     }

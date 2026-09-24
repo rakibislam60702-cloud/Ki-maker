@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class AppTab {
     ACCESS,      // Login / Workspace
@@ -69,7 +72,14 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
     private val _isBengali = MutableStateFlow(false)
     val isBengali: StateFlow<Boolean> = _isBengali.asStateFlow()
 
-    // Global App Kill Switch / Maintenance Mode
+    // Global App Control / DPModsSecurity/AppStatus
+    private val _isMaintenance = MutableStateFlow(false)
+    val isMaintenance: StateFlow<Boolean> = _isMaintenance.asStateFlow()
+
+    private val _isUpdateRequired = MutableStateFlow(false)
+    val isUpdateRequired: StateFlow<Boolean> = _isUpdateRequired.asStateFlow()
+
+    // Backward-compatibility: isServerOnline = !isMaintenance
     private val _isServerOnline = MutableStateFlow(true)
     val isServerOnline: StateFlow<Boolean> = _isServerOnline.asStateFlow()
 
@@ -97,13 +107,11 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
 
                 // Check active key expiration in real-time
                 val current = _activeKey.value
-                if (current != null && current.expiresAt != null) {
-                    if (System.currentTimeMillis() > current.expiresAt) {
-                        _authUiState.value = AuthUiState(
-                            errorMessage = if (_isBengali.value) "চাবির মেয়াদ শেষ হয়েছে!" else "License has expired!"
-                        )
-                        _activeKey.value = null
-                    }
+                if (current != null && current.isExpired) {
+                    _authUiState.value = AuthUiState(
+                        errorMessage = if (_isBengali.value) "চাবির মেয়াদ শেষ হয়েছে!" else "License has expired!"
+                    )
+                    _activeKey.value = null
                 }
             }
         }
@@ -131,13 +139,13 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun authenticate() {
-        if (!_isServerOnline.value) {
+        if (_isMaintenance.value || !_isServerOnline.value) {
             val msg = if (_maintenanceNotice.value.isNotBlank()) {
                 _maintenanceNotice.value
             } else if (_isBengali.value) {
                 "সার্ভার রক্ষণাবেক্ষণের জন্য সাময়িকভাবে বন্ধ আছে।"
             } else {
-                "Server is offline for maintenance. Access is temporarily disabled."
+                "Server is offline for maintenance (DPModsSecurity/AppStatus). Access is temporarily disabled."
             }
             _authUiState.value = AuthUiState(
                 isLoading = false,
@@ -206,7 +214,6 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
         _simulatedDeviceId.value = customId?.takeIf { it.isNotBlank() }
         _currentDeviceId.value = DeviceUtils.getCurrentDeviceId(app)
 
-        // If active session belongs to different device, re-evaluate
         if (_activeKey.value != null) {
             refreshActiveKey()
         }
@@ -218,21 +225,33 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
 
     fun createKey(key: String, days: Int, maxDevices: Int, status: String, note: String) {
         viewModelScope.launch {
+            val validDays = days.coerceAtLeast(1)
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val expiryDateStr = sdf.format(Date(System.currentTimeMillis() + validDays * 86_400_000L))
+
             val newKey = KeyItem(
                 key = key.trim().uppercase(),
-                days = days.coerceAtLeast(1),
+                days = validDays,
                 maxDevices = maxDevices.coerceAtLeast(1),
                 devices = emptyList(),
                 status = status,
                 createdAt = System.currentTimeMillis(),
                 expiresAt = null,
                 isUsed = false,
-                note = note
+                note = note,
+                expiryDateStr = expiryDateStr
             )
             repository.saveKey(newKey)
         }
     }
 
+    /**
+     * Key Generation with exact fields:
+     * - Banned: false
+     * - DeviceLimit: integer (selected device limit)
+     * - ExpiryDate: string in strict "YYYY-MM-DD" format (calculated as Current Date + selected validity days)
+     * - Devices: { "dummy": true }
+     */
     fun generateAndCreateKey(
         days: Int,
         maxDevices: Int,
@@ -249,18 +268,23 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
                 "KEY-$randomSuffix"
             }
 
+            val validDays = days.coerceAtLeast(1)
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val expiryDateStr = sdf.format(Date(System.currentTimeMillis() + validDays * 86_400_000L))
+
             val keyItem = KeyItem(
                 key = finalKey,
-                days = days.coerceAtLeast(1),
+                days = validDays,
                 maxDevices = maxDevices.coerceAtLeast(1),
                 devices = emptyList(),
-                status = "active",
+                status = "active", // Banned: false
                 createdAt = System.currentTimeMillis(),
                 expiresAt = null,
                 isUsed = false,
-                note = note.ifBlank { "Generated via Admin Panel" }
+                note = note.ifBlank { "Generated via Admin Panel" },
+                expiryDateStr = expiryDateStr
             )
-            // Instantly pushed to Firebase RTDB in repository.saveKey
+            // Instantly pushed to Firebase RTDB under DPModsSecurity/Keys/{keyName}
             val isSynced = repository.saveKey(keyItem)
             onCreated?.invoke(finalKey, isSynced)
         }
@@ -275,6 +299,7 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
     fun syncWithCloud() {
         viewModelScope.launch {
             repository.syncWithCloud()
+            loadAppStatus()
         }
     }
 
@@ -284,6 +309,9 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Ban/Unban action: toggle "DPModsSecurity/Keys/{keyName}/Banned"
+     */
     fun toggleKeyStatus(key: String) {
         viewModelScope.launch {
             repository.toggleKeyStatus(key)
@@ -302,6 +330,9 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Delete action: remove the node "DPModsSecurity/Keys/{keyName}"
+     */
     fun deleteKey(key: String) {
         viewModelScope.launch {
             repository.deleteKey(key)
@@ -352,22 +383,32 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    /**
+     * App Status management: read and toggle
+     * "DPModsSecurity/AppStatus/Maintenance" and "DPModsSecurity/AppStatus/UpdateRequired"
+     */
     fun loadAppStatus() {
         viewModelScope.launch {
-            repository.rtdbService.getAppStatus().onSuccess { (status, notice) ->
-                _isServerOnline.value = status.lowercase() != "offline"
-                _maintenanceNotice.value = notice
+            repository.rtdbService.getAppStatus().onSuccess { info ->
+                _isMaintenance.value = info.maintenance
+                _isUpdateRequired.value = info.updateRequired
+                _isServerOnline.value = !info.maintenance
+                _maintenanceNotice.value = info.notice
             }
         }
     }
 
-    fun setServerStatus(online: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
+    fun toggleMaintenance(maintenance: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
         viewModelScope.launch {
             _isStatusUpdating.value = true
-            val statusStr = if (online) "online" else "offline"
-            val result = repository.rtdbService.setAppStatus(statusStr, _maintenanceNotice.value)
+            val result = repository.rtdbService.setAppStatus(
+                maintenance = maintenance,
+                updateRequired = _isUpdateRequired.value,
+                notice = _maintenanceNotice.value
+            )
             if (result.isSuccess) {
-                _isServerOnline.value = online
+                _isMaintenance.value = maintenance
+                _isServerOnline.value = !maintenance
                 onComplete?.invoke(true)
             } else {
                 onComplete?.invoke(false)
@@ -376,12 +417,37 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun toggleUpdateRequired(updateRequired: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            _isStatusUpdating.value = true
+            val result = repository.rtdbService.setAppStatus(
+                maintenance = _isMaintenance.value,
+                updateRequired = updateRequired,
+                notice = _maintenanceNotice.value
+            )
+            if (result.isSuccess) {
+                _isUpdateRequired.value = updateRequired
+                onComplete?.invoke(true)
+            } else {
+                onComplete?.invoke(false)
+            }
+            _isStatusUpdating.value = false
+        }
+    }
+
+    fun setServerStatus(online: Boolean, onComplete: ((Boolean) -> Unit)? = null) {
+        toggleMaintenance(!online, onComplete)
+    }
+
     fun updateMaintenanceNotice(notice: String, onComplete: ((Boolean) -> Unit)? = null) {
         _maintenanceNotice.value = notice
         viewModelScope.launch {
             _isStatusUpdating.value = true
-            val statusStr = if (_isServerOnline.value) "online" else "offline"
-            val result = repository.rtdbService.setAppStatus(statusStr, notice)
+            val result = repository.rtdbService.setAppStatus(
+                maintenance = _isMaintenance.value,
+                updateRequired = _isUpdateRequired.value,
+                notice = notice
+            )
             onComplete?.invoke(result.isSuccess)
             _isStatusUpdating.value = false
         }

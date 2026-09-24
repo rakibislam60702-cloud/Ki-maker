@@ -16,7 +16,8 @@ data class KeyEntity(
     val createdAt: Long,
     val expiresAt: Long?,
     val isUsed: Boolean,
-    val note: String = ""
+    val note: String = "",
+    val expiryDateStr: String = ""
 ) {
     fun toModel(): KeyItem {
         val deviceList = mutableListOf<String>()
@@ -36,7 +37,8 @@ data class KeyEntity(
             createdAt = createdAt,
             expiresAt = expiresAt,
             isUsed = isUsed,
-            note = note
+            note = note,
+            expiryDateStr = expiryDateStr
         )
     }
 
@@ -53,7 +55,8 @@ data class KeyEntity(
                 createdAt = model.createdAt,
                 expiresAt = model.expiresAt,
                 isUsed = model.isUsed,
-                note = model.note
+                note = model.note,
+                expiryDateStr = model.expiryDateStr
             )
         }
     }

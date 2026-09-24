@@ -1,5 +1,9 @@
 package com.example.data.model
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 data class KeyItem(
     val key: String,
     val days: Int,
@@ -9,7 +13,8 @@ data class KeyItem(
     val createdAt: Long,
     val expiresAt: Long? = null,
     val isUsed: Boolean = false,
-    val note: String = ""
+    val note: String = "",
+    val expiryDateStr: String = "" // Strict YYYY-MM-DD format as in Firebase schema
 ) {
     val isActive: Boolean
         get() = status.equals("active", ignoreCase = true)
@@ -18,16 +23,45 @@ data class KeyItem(
         get() = status.equals("blocked", ignoreCase = true)
 
     val isExpired: Boolean
-        get() = expiresAt != null && System.currentTimeMillis() > expiresAt
+        get() {
+            if (expiresAt != null && System.currentTimeMillis() > expiresAt) return true
+            if (expiryDateStr.isNotBlank()) {
+                try {
+                    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                    val parsedDate = sdf.parse(expiryDateStr)
+                    if (parsedDate != null) {
+                        // End of day
+                        val endOfDay = parsedDate.time + 86_400_000L - 1
+                        return System.currentTimeMillis() > endOfDay
+                    }
+                } catch (_: Exception) {}
+            }
+            return false
+        }
+
+    fun getComputedExpiresAt(): Long? {
+        if (expiresAt != null) return expiresAt
+        if (expiryDateStr.isNotBlank()) {
+            try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val parsedDate = sdf.parse(expiryDateStr)
+                if (parsedDate != null) {
+                    return parsedDate.time + 86_400_000L - 1
+                }
+            } catch (_: Exception) {}
+        }
+        return null
+    }
 
     fun remainingTimeMillis(): Long {
-        if (expiresAt == null) return days * 86_400_000L
-        val diff = expiresAt - System.currentTimeMillis()
+        val targetExp = getComputedExpiresAt() ?: return days * 86_400_000L
+        val diff = targetExp - System.currentTimeMillis()
         return if (diff > 0) diff else 0L
     }
 
     fun formatRemainingTime(): String {
-        if (expiresAt == null) {
+        val targetExp = getComputedExpiresAt()
+        if (targetExp == null) {
             return "$days days (Not activated yet)"
         }
         val remaining = remainingTimeMillis()
@@ -45,7 +79,7 @@ data class KeyItem(
     }
 
     fun progressFraction(): Float {
-        if (expiresAt == null) return 1.0f
+        val targetExp = getComputedExpiresAt() ?: return 1.0f
         val totalDuration = days * 86_400_000L
         val remaining = remainingTimeMillis()
         if (totalDuration <= 0) return 0f

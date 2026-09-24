@@ -5,6 +5,7 @@ import com.example.data.local.KeyEntity
 import com.example.data.local.SessionLogEntity
 import com.example.data.model.KeyItem
 import com.example.data.model.SessionLog
+import com.example.data.remote.AppStatusInfo
 import com.example.data.remote.FirebaseRtdbService
 import com.example.util.JsonUtils
 import kotlinx.coroutines.flow.Flow
@@ -12,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 sealed class AuthResult {
     data class Success(
@@ -38,7 +42,7 @@ data class CloudSyncStatus(
     val state: String = "IDLE", // "IDLE", "SYNCING", "SYNCED", "ERROR"
     val lastSyncTime: Long? = null,
     val syncedCount: Int = 0,
-    val message: String = "Firebase Realtime DB Ready",
+    val message: String = "Firebase Realtime DB Ready (DPModsSecurity)",
     val isOnline: Boolean = true
 )
 
@@ -76,14 +80,14 @@ class KeyRepository(
                 )
             )
         }
-        // Attempt initial background cloud sync
+        // Attempt initial background cloud sync from DPModsSecurity/Keys
         syncWithCloud()
     }
 
     suspend fun syncWithCloud(): Result<Int> {
         _cloudSyncStatus.value = _cloudSyncStatus.value.copy(
             state = "SYNCING",
-            message = "Connecting to Firebase RTDB..."
+            message = "Connecting to DPModsSecurity/Keys on Firebase..."
         )
         val result = rtdbService.fetchAllKeys()
         return if (result.isSuccess) {
@@ -96,7 +100,7 @@ class KeyRepository(
                         deviceId = "FIREBASE",
                         timestamp = System.currentTimeMillis(),
                         action = "PULL_SUCCESS",
-                        details = "Pulled ${cloudKeys.size} keys from Firebase RTDB",
+                        details = "Pulled ${cloudKeys.size} keys from DPModsSecurity/Keys",
                         isSuccess = true
                     )
                 )
@@ -104,12 +108,12 @@ class KeyRepository(
                     state = "SYNCED",
                     lastSyncTime = System.currentTimeMillis(),
                     syncedCount = cloudKeys.size,
-                    message = "Synced ${cloudKeys.size} keys from Firebase",
+                    message = "Synced ${cloudKeys.size} keys from DPModsSecurity/Keys",
                     isOnline = true
                 )
                 Result.success(cloudKeys.size)
             } else {
-                // Cloud is empty, push local default keys to Firebase
+                // Cloud is empty, push local default keys to DPModsSecurity/Keys
                 val localKeys = keyDao.getAllKeys().map { it.toModel() }
                 if (localKeys.isNotEmpty()) {
                     rtdbService.seedKeys(localKeys)
@@ -117,7 +121,7 @@ class KeyRepository(
                         state = "SYNCED",
                         lastSyncTime = System.currentTimeMillis(),
                         syncedCount = localKeys.size,
-                        message = "Pushed ${localKeys.size} local keys to Firebase",
+                        message = "Pushed ${localKeys.size} local keys to DPModsSecurity/Keys",
                         isOnline = true
                     )
                     Result.success(localKeys.size)
@@ -126,7 +130,7 @@ class KeyRepository(
                         state = "SYNCED",
                         lastSyncTime = System.currentTimeMillis(),
                         syncedCount = 0,
-                        message = "Connected to Firebase RTDB (0 keys)",
+                        message = "Connected to DPModsSecurity/Keys (0 keys)",
                         isOnline = true
                     )
                     Result.success(0)
@@ -151,7 +155,7 @@ class KeyRepository(
                 state = "SYNCED",
                 lastSyncTime = System.currentTimeMillis(),
                 syncedCount = res.getOrDefault(localKeys.size),
-                message = "Pushed ${localKeys.size} keys to Firebase",
+                message = "Pushed ${localKeys.size} keys to DPModsSecurity/Keys",
                 isOnline = true
             )
         }
@@ -198,7 +202,7 @@ class KeyRepository(
 
         val keyItem = entity.toModel()
 
-        // 1. Status check
+        // 1. Status check (Banned)
         if (keyItem.isBlocked) {
             logDao.insertLog(
                 SessionLogEntity(
@@ -206,26 +210,26 @@ class KeyRepository(
                     deviceId = currentDeviceId,
                     timestamp = System.currentTimeMillis(),
                     action = "AUTH_BLOCKED",
-                    details = "Key is marked as blocked by admin",
+                    details = "Key is marked as banned by admin",
                     isSuccess = false
                 )
             )
             return AuthResult.Error(
                 reason = AuthErrorReason.BLOCKED,
-                message = "This license key is blocked (status: blocked) / এই চাবিটি ব্লক করা আছে"
+                message = "This license key is banned / এই চাবিটি ব্যান করা আছে"
             )
         }
 
-        // 2. Expiration check (if already activated)
+        // 2. Expiration check
         val now = System.currentTimeMillis()
-        if (keyItem.expiresAt != null && now > keyItem.expiresAt) {
+        if (keyItem.isExpired) {
             logDao.insertLog(
                 SessionLogEntity(
                     keyCode = keyItem.key,
                     deviceId = currentDeviceId,
                     timestamp = now,
                     action = "AUTH_EXPIRED",
-                    details = "Key expired on ${keyItem.expiresAt}",
+                    details = "Key expired on ${keyItem.expiryDateStr.ifEmpty { keyItem.expiresAt.toString() }}",
                     isSuccess = false
                 )
             )
@@ -247,7 +251,7 @@ class KeyRepository(
                         deviceId = currentDeviceId,
                         timestamp = now,
                         action = "MAX_DEVICES_EXCEEDED",
-                        details = "Max devices: ${keyItem.maxDevices}, Registered: ${keyItem.devices.joinToString()}",
+                        details = "DeviceLimit: ${keyItem.maxDevices}, Registered: ${keyItem.devices.joinToString()}",
                         isSuccess = false
                     )
                 )
@@ -260,8 +264,7 @@ class KeyRepository(
             }
         }
 
-        // 4. First login expiration calculation rule:
-        // "expiresAt: null, // প্রথম লগইনের পর সময় গণনা শুরু হবে"
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         var isFirstActivation = false
         val newExpiresAt = if (keyItem.expiresAt == null || !keyItem.isUsed) {
             isFirstActivation = true
@@ -270,26 +273,34 @@ class KeyRepository(
             keyItem.expiresAt
         }
 
+        val finalExpiryDateStr = if (keyItem.expiryDateStr.isNotBlank()) {
+            keyItem.expiryDateStr
+        } else {
+            sdf.format(Date(newExpiresAt))
+        }
+
         val updatedKey = keyItem.copy(
             devices = updatedDevices,
             expiresAt = newExpiresAt,
-            isUsed = true
+            isUsed = true,
+            expiryDateStr = finalExpiryDateStr
         )
 
         // Save locally
         keyDao.insertOrUpdate(KeyEntity.fromModel(updatedKey))
 
-        // Push session updates to Firebase RTDB
+        // Push session updates to DPModsSecurity/Keys/{keyName}
         rtdbService.updateKeySession(
             key = updatedKey.key,
             devices = updatedKey.devices,
             expiresAt = updatedKey.expiresAt,
-            isUsed = updatedKey.isUsed
+            isUsed = updatedKey.isUsed,
+            expiryDateStr = updatedKey.expiryDateStr
         )
 
         val actionName = if (isFirstActivation) "FIRST_LOGIN_ACTIVATED" else "LOGIN_SUCCESS"
         val message = if (isFirstActivation) {
-            "License activated! Validity started for ${updatedKey.days} days / লাইসেন্স সফলভাবে সক্রিয় হয়েছে!"
+            "License activated! Validity until $finalExpiryDateStr / লাইসেন্স সফলভাবে সক্রিয় হয়েছে!"
         } else {
             "License verified successfully / লগইন সফল হয়েছে"
         }
@@ -300,7 +311,7 @@ class KeyRepository(
                 deviceId = currentDeviceId,
                 timestamp = now,
                 action = actionName,
-                details = "Device bound: $currentDeviceId | Valid until: $newExpiresAt",
+                details = "Device bound: $currentDeviceId | ExpiryDate: $finalExpiryDateStr",
                 isSuccess = true
             )
         )
@@ -318,13 +329,13 @@ class KeyRepository(
 
     suspend fun saveKey(keyItem: KeyItem): Boolean {
         keyDao.insertOrUpdate(KeyEntity.fromModel(keyItem))
-        // Instantly push to Firebase Realtime Database
+        // Instantly push to Firebase Realtime Database under DPModsSecurity/Keys/{keyName}
         val result = rtdbService.putKey(keyItem)
         return if (result.isSuccess) {
             _cloudSyncStatus.value = CloudSyncStatus(
                 state = "SYNCED",
                 lastSyncTime = System.currentTimeMillis(),
-                message = "Live Synced: ${keyItem.key} instantly saved to Firebase",
+                message = "Live Synced: ${keyItem.key} saved to DPModsSecurity/Keys",
                 isOnline = true
             )
             logDao.insertLog(
@@ -333,7 +344,7 @@ class KeyRepository(
                     deviceId = "ADMIN",
                     timestamp = System.currentTimeMillis(),
                     action = "KEY_CREATED_CLOUD_SYNC",
-                    details = "Key ${keyItem.key} (${keyItem.days} days, max ${keyItem.maxDevices} dev) created and instantly pushed to Firebase RTDB",
+                    details = "Key ${keyItem.key} (Limit: ${keyItem.maxDevices}, Expiry: ${keyItem.expiryDateStr}) pushed to DPModsSecurity/Keys",
                     isSuccess = true
                 )
             )
@@ -350,22 +361,26 @@ class KeyRepository(
         }
     }
 
+    /**
+     * Ban/Unban action: toggle "DPModsSecurity/Keys/{keyName}/Banned"
+     */
     suspend fun toggleKeyStatus(keyCode: String): KeyItem? {
         val existing = keyDao.getKey(keyCode)?.toModel() ?: return null
-        val newStatus = if (existing.status.equals("active", ignoreCase = true)) "blocked" else "active"
+        val willBeBlocked = existing.status.equals("active", ignoreCase = true)
+        val newStatus = if (willBeBlocked) "blocked" else "active"
         val updated = existing.copy(status = newStatus)
         keyDao.insertOrUpdate(KeyEntity.fromModel(updated))
 
-        // Sync status to Firebase RTDB
-        rtdbService.updateKeyStatus(keyCode, newStatus)
+        // Sync toggle to Firebase RTDB under DPModsSecurity/Keys/{keyName}/Banned
+        rtdbService.setKeyBanned(keyCode, willBeBlocked)
 
         logDao.insertLog(
             SessionLogEntity(
                 keyCode = keyCode,
                 deviceId = "ADMIN",
                 timestamp = System.currentTimeMillis(),
-                action = "STATUS_CHANGED",
-                details = "Status changed to $newStatus (Synced with Firebase RTDB)",
+                action = if (willBeBlocked) "KEY_BANNED" else "KEY_UNBANNED",
+                details = "Key Banned set to $willBeBlocked (Synced to DPModsSecurity/Keys/$keyCode/Banned)",
                 isSuccess = true
             )
         )
@@ -381,8 +396,8 @@ class KeyRepository(
         )
         keyDao.insertOrUpdate(KeyEntity.fromModel(updated))
 
-        // Sync reset to Firebase RTDB
-        rtdbService.updateKeySession(keyCode, emptyList(), null, false)
+        // Sync reset to DPModsSecurity/Keys
+        rtdbService.updateKeySession(keyCode, emptyList(), null, false, existing.expiryDateStr)
 
         logDao.insertLog(
             SessionLogEntity(
@@ -390,7 +405,7 @@ class KeyRepository(
                 deviceId = "ADMIN",
                 timestamp = System.currentTimeMillis(),
                 action = "DEVICES_RESET",
-                details = "Cleared bound devices and reset expiration timer",
+                details = "Cleared bound devices from DPModsSecurity/Keys/$keyCode",
                 isSuccess = true
             )
         )
@@ -403,8 +418,8 @@ class KeyRepository(
         val updated = existing.copy(devices = updatedDevices)
         keyDao.insertOrUpdate(KeyEntity.fromModel(updated))
 
-        // Sync to Firebase RTDB
-        rtdbService.updateKeySession(keyCode, updatedDevices, existing.expiresAt, existing.isUsed)
+        // Sync to DPModsSecurity/Keys
+        rtdbService.updateKeySession(keyCode, updatedDevices, existing.expiresAt, existing.isUsed, existing.expiryDateStr)
 
         logDao.insertLog(
             SessionLogEntity(
@@ -412,16 +427,19 @@ class KeyRepository(
                 deviceId = deviceId,
                 timestamp = System.currentTimeMillis(),
                 action = "DEVICE_UNBOUND",
-                details = "Unbound device $deviceId from license",
+                details = "Unbound device $deviceId from DPModsSecurity/Keys/$keyCode",
                 isSuccess = true
             )
         )
         return updated
     }
 
+    /**
+     * Delete action: remove the node "DPModsSecurity/Keys/{keyName}"
+     */
     suspend fun deleteKey(keyCode: String) {
         keyDao.deleteByKey(keyCode)
-        // Sync delete to Firebase RTDB
+        // Sync delete to DPModsSecurity/Keys/{keyName}
         rtdbService.deleteKey(keyCode)
 
         logDao.insertLog(
@@ -430,7 +448,7 @@ class KeyRepository(
                 deviceId = "ADMIN",
                 timestamp = System.currentTimeMillis(),
                 action = "KEY_DELETED",
-                details = "License key removed from database and Firebase RTDB",
+                details = "License key removed from DPModsSecurity/Keys/$keyCode",
                 isSuccess = true
             )
         )
@@ -448,7 +466,7 @@ class KeyRepository(
                 deviceId = "ADMIN",
                 timestamp = System.currentTimeMillis(),
                 action = "RESET_TO_DEFAULTS",
-                details = "Restored all default keys to Room and Firebase RTDB",
+                details = "Restored all default keys to Room and DPModsSecurity/Keys",
                 isSuccess = true
             )
         )
@@ -468,7 +486,7 @@ class KeyRepository(
                         deviceId = "ADMIN",
                         timestamp = System.currentTimeMillis(),
                         action = "KEYS_IMPORTED",
-                        details = "Imported ${parsed.size} keys from JSON payload and synced with Firebase",
+                        details = "Imported ${parsed.size} keys to DPModsSecurity/Keys",
                         isSuccess = true
                     )
                 )
@@ -488,4 +506,3 @@ class KeyRepository(
         logDao.clearLogs()
     }
 }
-
