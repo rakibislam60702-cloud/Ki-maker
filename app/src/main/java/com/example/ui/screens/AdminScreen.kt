@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -102,6 +103,17 @@ enum class AdminTab {
     DATABASE
 }
 
+data class DeployAlertState(
+    val title: String,
+    val message: String,
+    val isSuccess: Boolean,
+    val key: String? = null,
+    val isConnectionError: Boolean = false,
+    val pendingDays: Int = 3,
+    val pendingDevices: Int = 1,
+    val pendingCustomName: String? = null
+)
+
 @Composable
 fun AdminScreen(viewModel: KeyAuthViewModel) {
     val context = LocalContext.current
@@ -112,6 +124,7 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
     val isServerOnline by viewModel.isServerOnline.collectAsState()
     val serverMaintenanceNotice by viewModel.maintenanceNotice.collectAsState()
     val isStatusUpdating by viewModel.isStatusUpdating.collectAsState()
+    val isDeployingKey by viewModel.isDeployingKey.collectAsState()
 
     var activeTab by remember { mutableStateOf(AdminTab.GENERATE) }
     var localNoticeInput by remember(serverMaintenanceNotice) { mutableStateOf(serverMaintenanceNotice) }
@@ -125,6 +138,7 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
     var selectedMaxDevices by remember { mutableStateOf(1) } // 1 or 2 devices per request
     var customKeyNameInput by remember { mutableStateOf("") }
     var lastGeneratedKeyAlert by remember { mutableStateOf<String?>(null) }
+    var deployAlertState by remember { mutableStateOf<DeployAlertState?>(null) }
 
     val activeCount = remember(allKeys) { allKeys.count { it.isActive && !it.isExpired } }
     val blockedCount = remember(allKeys) { allKeys.count { it.isBlocked } }
@@ -863,21 +877,43 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
                                     .height(48.dp)
                                     .shadow(8.dp, RoundedCornerShape(12.dp), spotColor = CyanPrimaryLight, ambientColor = CyanPrimaryLight)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
+                                    .clickable(enabled = !isDeployingKey) {
                                         val days = daysInput.toIntOrNull() ?: 3
-                                        val customName = customKeyNameInput.trim()
-                                        viewModel.generateAndCreateKey(
+                                        val customName = customKeyNameInput.trim().ifEmpty { null }
+                                        viewModel.generateAndDeployKey(
                                             days = days,
-                                            maxDevices = selectedMaxDevices,
-                                            customKeyName = if (customName.isNotBlank()) customName else null
-                                        ) { generatedKey, _ ->
-                                            lastGeneratedKeyAlert = generatedKey
-                                            customKeyNameInput = ""
-                                            Toast.makeText(
-                                                context,
-                                                "✓ Key $generatedKey deployed to Firebase!",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                            deviceLimit = selectedMaxDevices,
+                                            customKeyName = customName
+                                        ) { isSuccess, message, key, isConnError ->
+                                            if (isSuccess && key != null) {
+                                                customKeyNameInput = ""
+                                                deployAlertState = DeployAlertState(
+                                                    title = "Key Created",
+                                                    message = message,
+                                                    isSuccess = true,
+                                                    key = key
+                                                )
+                                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            } else if (isConnError) {
+                                                deployAlertState = DeployAlertState(
+                                                    title = "Connection Error",
+                                                    message = message,
+                                                    isSuccess = false,
+                                                    isConnectionError = true,
+                                                    pendingDays = days,
+                                                    pendingDevices = selectedMaxDevices,
+                                                    pendingCustomName = customName
+                                                )
+                                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            } else {
+                                                deployAlertState = DeployAlertState(
+                                                    title = "Key Creation Error",
+                                                    message = message,
+                                                    isSuccess = false,
+                                                    isConnectionError = false
+                                                )
+                                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                     }
                                     .testTag("generate_key_button"),
@@ -890,24 +926,45 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
                                         .background(CyberGradient),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Bolt,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(19.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Generate & Deploy Key",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            letterSpacing = 0.5.sp,
-                                            color = Color.White
-                                        )
+                                    if (isDeployingKey) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(17.dp),
+                                                color = Color.White,
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Connecting to Worker...",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                letterSpacing = 0.5.sp,
+                                                color = Color.White
+                                            )
+                                        }
+                                    } else {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Bolt,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(19.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Generate & Deploy Key",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                letterSpacing = 0.5.sp,
+                                                color = Color.White
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1068,7 +1125,179 @@ fun AdminScreen(viewModel: KeyAuthViewModel) {
         }
     }
 
-    // Modal Alert when Key is Generated
+    // Modal Alert when Key is Generated / Deployed
+    if (deployAlertState != null) {
+        val alertInfo = deployAlertState!!
+        AlertDialog(
+            onDismissRequest = { deployAlertState = null },
+            containerColor = TechDarkSurface,
+            titleContentColor = TextPrimaryDark,
+            textContentColor = TextSecondaryDark,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (alertInfo.isSuccess) Color(0x3310B981) else Color(0x33EF4444)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (alertInfo.isSuccess) Icons.Default.Check else Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (alertInfo.isSuccess) StatusActiveGreen else StatusBlockedRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(alertInfo.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column {
+                    if (alertInfo.isSuccess && alertInfo.key != null) {
+                        Text(
+                            text = alertInfo.message,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimaryDark
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            color = TechDarkSurfaceVariant,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, GlassCardBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = alertInfo.key,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = CyanPrimaryLight
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("License Key", alertInfo.key))
+                                        Toast.makeText(context, "Copied key to clipboard!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = CyanPrimaryLight, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Surface(
+                            color = StatusActiveGreenBg,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, StatusActiveGreen.copy(alpha = 0.3f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudDone,
+                                    contentDescription = null,
+                                    tint = StatusActiveGreen,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Worker API & Firebase RTDB Synced",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = StatusActiveGreen
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = alertInfo.message,
+                            fontSize = 13.sp,
+                            color = if (alertInfo.isConnectionError) StatusWarningAmber else StatusBlockedRed
+                        )
+                        if (alertInfo.isConnectionError) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "You can deploy directly to Firebase Realtime Database (DPModsSecurity/Keys) to bypass worker network issues:",
+                                fontSize = 11.5.sp,
+                                color = TextSecondaryDark
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (alertInfo.isSuccess && alertInfo.key != null) {
+                    Button(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("License Key", alertInfo.key))
+                            Toast.makeText(context, "Copied key to clipboard!", Toast.LENGTH_SHORT).show()
+                            deployAlertState = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanPrimaryLight, contentColor = Color(0xFF002844)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Copy Key", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                } else if (alertInfo.isConnectionError) {
+                    Button(
+                        onClick = {
+                            viewModel.generateAndCreateKey(
+                                days = alertInfo.pendingDays,
+                                maxDevices = alertInfo.pendingDevices,
+                                customKeyName = alertInfo.pendingCustomName
+                            ) { fbKey, _ ->
+                                customKeyNameInput = ""
+                                deployAlertState = DeployAlertState(
+                                    title = "Key Created",
+                                    message = "Key Created: $fbKey",
+                                    isSuccess = true,
+                                    key = fbKey
+                                )
+                                Toast.makeText(context, "Key Created: $fbKey (Firebase Direct)", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanPrimaryLight, contentColor = Color(0xFF002844)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Deploy via Firebase Direct", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = { deployAlertState = null },
+                        colors = ButtonDefaults.buttonColors(containerColor = TechDarkSurfaceVariant, contentColor = TextPrimaryDark),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Dismiss", fontSize = 12.sp)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deployAlertState = null }) {
+                    Text("Close", color = TextSecondaryDark)
+                }
+            }
+        )
+    }
+
+    // Modal Alert when Key is Generated via fallback
     if (lastGeneratedKeyAlert != null) {
         val generated = lastGeneratedKeyAlert!!
         AlertDialog(

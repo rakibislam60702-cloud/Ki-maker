@@ -89,6 +89,9 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
     private val _isStatusUpdating = MutableStateFlow(false)
     val isStatusUpdating: StateFlow<Boolean> = _isStatusUpdating.asStateFlow()
 
+    private val _isDeployingKey = MutableStateFlow(false)
+    val isDeployingKey: StateFlow<Boolean> = _isDeployingKey.asStateFlow()
+
     // 1-second ticker for live countdown in UI
     private val _ticker = MutableStateFlow(System.currentTimeMillis())
     val ticker: StateFlow<Long> = _ticker.asStateFlow()
@@ -246,6 +249,54 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Executes Cloudflare Worker endpoint key creation matching:
+     * Endpoint: https://misty-bush-77a9.rakibul74348.workers.dev/api/admin/create-key
+     * Method: POST
+     * Headers: Content-Type: application/json
+     * Body: {
+     *   key: keyName,
+     *   days: validityDays,
+     *   deviceLimit: deviceLimit,
+     *   user: "Admin Created"
+     * }
+     *
+     * Invokes callback with:
+     * - isSuccess
+     * - message ("Key Created: {key}" or "Error: {error}" or "Connection Error: {message}")
+     * - key
+     * - isConnectionError
+     */
+    fun generateAndDeployKey(
+        days: Int,
+        deviceLimit: Int,
+        customKeyName: String? = null,
+        onResult: (isSuccess: Boolean, message: String, key: String?, isConnectionError: Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            _isDeployingKey.value = true
+            try {
+                val result = repository.deployKeyViaWorker(
+                    customKey = customKeyName,
+                    validityDays = days,
+                    deviceLimit = deviceLimit
+                )
+                if (result.isSuccess && result.key != null) {
+                    onResult(true, "Key Created: ${result.key}", result.key, false)
+                } else if (result.isConnectionError) {
+                    onResult(false, "Connection Error: ${result.errorMessage ?: "Network unreachable"}", null, true)
+                } else {
+                    val err = result.errorMessage ?: "Failed to create key"
+                    onResult(false, "Error: $err", null, false)
+                }
+            } catch (e: Exception) {
+                onResult(false, "Connection Error: ${e.localizedMessage ?: e.message ?: "Failed to connect"}", null, true)
+            } finally {
+                _isDeployingKey.value = false
+            }
+        }
+    }
+
+    /**
      * Key Generation with exact fields:
      * - Banned: false
      * - DeviceLimit: integer (selected device limit)
@@ -265,7 +316,7 @@ class KeyAuthViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
                 val randomSuffix = (1..8).map { chars.random() }.joinToString("")
-                "KEY-$randomSuffix"
+                "AIM-$randomSuffix"
             }
 
             val validDays = days.coerceAtLeast(1)

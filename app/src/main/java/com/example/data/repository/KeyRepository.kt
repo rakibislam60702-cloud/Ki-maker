@@ -7,6 +7,8 @@ import com.example.data.model.KeyItem
 import com.example.data.model.SessionLog
 import com.example.data.remote.AppStatusInfo
 import com.example.data.remote.FirebaseRtdbService
+import com.example.data.remote.WorkerKeyCreationResult
+import com.example.data.remote.WorkerKeyService
 import com.example.util.JsonUtils
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,7 +50,8 @@ data class CloudSyncStatus(
 
 class KeyRepository(
     private val database: AppDatabase,
-    val rtdbService: FirebaseRtdbService = FirebaseRtdbService()
+    val rtdbService: FirebaseRtdbService = FirebaseRtdbService(),
+    val workerKeyService: WorkerKeyService = WorkerKeyService()
 ) {
     private val keyDao = database.keyDao()
     private val logDao = database.sessionLogDao()
@@ -358,6 +361,99 @@ class KeyRepository(
                 isOnline = false
             )
             false
+        }
+    }
+
+    /**
+     * Executes the exact key deployment logic using the Cloudflare Worker API:
+     * POST https://misty-bush-77a9.rakibul74348.workers.dev/api/admin/create-key
+     * Payload: { key, days, deviceLimit, user: "Admin Created" }
+     *
+     * If worker responds with success:
+     * - Saves key locally in Room DB
+     * - Pushes key to Firebase RTDB under DPModsSecurity/Keys/{keyName}
+     * - Returns WorkerKeyCreationResult(isSuccess = true, key = resultKey)
+     */
+    suspend fun deployKeyViaWorker(
+        customKey: String?,
+        validityDays: Int,
+        deviceLimit: Int
+    ): WorkerKeyCreationResult {
+        val days = validityDays.coerceAtLeast(1)
+        val limit = deviceLimit.coerceAtLeast(1)
+
+        val keyName = if (!customKey.isNullOrBlank()) {
+            customKey.trim().uppercase()
+        } else {
+            workerKeyService.generateRandomAimKey()
+        }
+
+        val workerResult = workerKeyService.createKeyViaWorker(
+            key = keyName,
+            days = days,
+            deviceLimit = limit,
+            user = "Admin Created"
+        )
+
+        if (workerResult.isSuccess) {
+            val finalKey = workerResult.key?.ifBlank { keyName } ?: keyName
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val expiryDateStr = sdf.format(Date(System.currentTimeMillis() + days * 86_400_000L))
+
+            val keyItem = KeyItem(
+                key = finalKey,
+                days = days,
+                maxDevices = limit,
+                devices = emptyList(),
+                status = "active", // Banned: false
+                createdAt = System.currentTimeMillis(),
+                expiresAt = null,
+                isUsed = false,
+                note = "Worker & Firebase Synced",
+                expiryDateStr = expiryDateStr
+            )
+
+            // Save locally
+            keyDao.insertOrUpdate(KeyEntity.fromModel(keyItem))
+
+            // Ensure Firebase RTDB has it under DPModsSecurity/Keys/{keyName}
+            rtdbService.putKey(keyItem)
+
+            // Audit log
+            logDao.insertLog(
+                SessionLogEntity(
+                    keyCode = finalKey,
+                    deviceId = "ADMIN",
+                    timestamp = System.currentTimeMillis(),
+                    action = "KEY_DEPLOYED_WORKER",
+                    details = "Key $finalKey deployed via Cloudflare Worker and Firebase RTDB",
+                    isSuccess = true
+                )
+            )
+
+            _cloudSyncStatus.value = CloudSyncStatus(
+                state = "SYNCED",
+                lastSyncTime = System.currentTimeMillis(),
+                message = "Live Synced: $finalKey deployed via Worker API",
+                isOnline = true
+            )
+
+            return WorkerKeyCreationResult(
+                isSuccess = true,
+                key = finalKey
+            )
+        } else {
+            logDao.insertLog(
+                SessionLogEntity(
+                    keyCode = keyName,
+                    deviceId = "ADMIN",
+                    timestamp = System.currentTimeMillis(),
+                    action = "KEY_DEPLOY_FAILED",
+                    details = "Worker deploy failed: ${workerResult.errorMessage}",
+                    isSuccess = false
+                )
+            )
+            return workerResult
         }
     }
 

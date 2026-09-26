@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rakib Official - License Key Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090D16;
+      --card-bg: rgba(15, 23, 42, 0.75);
+      --card-border: rgba(56, 189, 248, 0.2);
+      --cyan: #38BDF8;
+      --indigo: #6366F1;
+      --green: #10B981;
+      --red: #EF4444;
+      --text: #F8FAFC;
+      --text-muted: #94A3B8;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      width: 100%;
+      max-width: 520px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 28px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 40px rgba(56, 189, 248, 0.1);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .header-title h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #38BDF8, #818CF8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .header-title p {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .badge {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .field-group {
+      margin-bottom: 20px;
+    }
+    .label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+      display: block;
+    }
+    .options-row {
+      display: flex;
+      gap: 8px;
+    }
+    .opt-btn {
+      flex: 1;
+      padding: 10px 0;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(30, 41, 59, 0.6);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .opt-btn.active {
+      background: rgba(56, 189, 248, 0.2);
+      border-color: var(--cyan);
+      color: var(--cyan);
+    }
+    .device-btn.active {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: #818CF8;
+      color: #A5B4FC;
+    }
+    input[type="text"] {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+    }
+    .deploy-btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: linear-gradient(135deg, #0284C7, #4F46E5);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      margin-top: 10px;
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.3);
+      transition: transform 0.1s, opacity 0.2s;
+    }
+    .deploy-btn:active {
+      transform: scale(0.98);
+    }
+    .deploy-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .footer-note {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 16px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-title">
+        <h1>Rakib Official Admin</h1>
+        <p>KeyAuth License Management & Sync</p>
+      </div>
+      <div class="badge">LIVE API</div>
+    </div>
+
+    <div class="field-group">
+      <label class="label">Validity (Days)</label>
+      <div class="options-row">
+        <button type="button" class="opt-btn day-btn" data-days="1" onclick="selectDays(1)">1 Day</button>
+        <button type="button" class="opt-btn day-btn active" data-days="3" onclick="selectDays(3)">3 Days</button>
+        <button type="button" class="opt-btn day-btn" data-days="7" onclick="selectDays(7)">7 Days</button>
+        <button type="button" class="opt-btn day-btn" data-days="30" onclick="selectDays(30)">30 Days</button>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <label class="label">Device Limit</label>
+      <div class="options-row">
+        <button type="button" class="opt-btn device-btn active" data-limit="1" onclick="selectDeviceLimit(1)">1 Device</button>
+        <button type="button" class="opt-btn device-btn" data-limit="2" onclick="selectDeviceLimit(2)">2 Devices</button>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <label class="label">Custom Key Name (Optional)</label>
+      <input type="text" id="customKeyInput" placeholder="Auto-generate if empty (e.g. AIM-VIP100)" />
+    </div>
+
+    <button type="button" id="deployBtn" class="deploy-btn" onclick="generateAndDeployKey()">
+      Generate &amp; Deploy Key
+    </button>
+
+    <div class="footer-note">
+      Endpoint: misty-bush-77a9.rakibul74348.workers.dev
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
